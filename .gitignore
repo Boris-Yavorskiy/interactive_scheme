@@ -1,4 +1,4 @@
 node_modules
-dist
+public/js
 .wrangler
 .dev.vars

@@ -62,6 +62,7 @@ export interface ComponentDef {
 }
 
 export interface CircuitResult {
+  nodeVoltage: Record<string, number>
   branchCurrent: Record<string, number>
   partVoltage: Record<string, number>
   active: Record<string, boolean>

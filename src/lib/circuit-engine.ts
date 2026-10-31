@@ -1,33 +1,42 @@
 import type { Part, LogicalWire, CircuitResult } from '../types'
-import { COMPONENT_MAP, COMPONENT_TERMINALS } from './components-data'
+import { COMPONENT_MAP, COMPONENT_TERMINALS } from './components-data.js'
+
+const EPS = 1e-9
 
 interface Branch {
   partId: string
-  partType: string
-  nodeA: number
-  nodeB: number
+  type: string
+  nodeA: string
+  nodeB: string
   resistance: number
   emf: number
   isOpen: boolean
-  isMeterVoltage: boolean
+  forwardDropV: number
+  diodeConducting: boolean
+}
+
+interface MnaResult {
+  nodeVoltage: Record<string, number>
+  branchCurrent: Record<string, number>
 }
 
 class UnionFind {
-  private parent: number[]
+  private parent: Record<string, string> = {}
 
-  constructor(size: number) {
-    this.parent = Array.from({ length: size }, (_, i) => i)
-  }
-
-  find(x: number): number {
-    while (this.parent[x] !== x) {
-      this.parent[x] = this.parent[this.parent[x]]
-      x = this.parent[x]
+  find(x: string): string {
+    if (!(x in this.parent)) this.parent[x] = x
+    let root = x
+    while (this.parent[root] !== root) root = this.parent[root]
+    let cur = x
+    while (this.parent[cur] !== root) {
+      const next = this.parent[cur]
+      this.parent[cur] = root
+      cur = next
     }
-    return x
+    return root
   }
 
-  union(a: number, b: number) {
+  union(a: string, b: string) {
     const ra = this.find(a)
     const rb = this.find(b)
     if (ra !== rb) this.parent[ra] = rb
@@ -35,290 +44,334 @@ class UnionFind {
 }
 
 function termKey(partId: string, label: string): string {
-  return partId + ':' + label
+  return partId + '::' + label
 }
 
-function buildBranch(part: Part, nodeA: number, nodeB: number): Branch {
+function buildNodes(parts: Part[], wires: LogicalWire[]): UnionFind {
+  const uf = new UnionFind()
+
+  parts.forEach(p => {
+    if (!COMPONENT_MAP[p.type]) return
+    const terms = COMPONENT_TERMINALS[p.type] || []
+    terms.forEach(t => uf.find(termKey(p.id, t.label)))
+  })
+
+  wires.forEach(w => {
+    uf.union(termKey(w.fromPart, w.fromTerm), termKey(w.toPart, w.toTerm))
+  })
+
+  return uf
+}
+
+function describeBranch(part: Part, uf: UnionFind, conducting: Record<string, boolean>): Branch | null {
   const def = COMPONENT_MAP[part.type]
   const terms = COMPONENT_TERMINALS[part.type] || []
+  if (!def || terms.length < 2) return null
 
   const branch: Branch = {
     partId: part.id,
-    partType: part.type,
-    nodeA,
-    nodeB,
-    resistance: 1e9,
+    type: part.type,
+    nodeA: uf.find(termKey(part.id, terms[0].label)),
+    nodeB: uf.find(termKey(part.id, terms[1].label)),
+    resistance: 0,
     emf: 0,
     isOpen: false,
-    isMeterVoltage: false
+    forwardDropV: 0,
+    diodeConducting: true
   }
 
+  const state = part.state || {}
+
   switch (part.type) {
-    case 'battery': {
-      const v = typeof part.state.voltage === 'number' ? part.state.voltage : (def?.emfV ?? 9)
-      branch.emf = v
-      branch.resistance = def?.internalOhm ?? 0.5
-      if (terms[0]?.label === 'neg') branch.emf = -branch.emf
+    case 'battery':
+      branch.emf = typeof state.voltage === 'number' ? state.voltage : (def.emfV ?? 9)
+      branch.resistance = def.internalOhm ?? 0
+      if (terms[0].label === 'neg') branch.emf = -branch.emf
       break
-    }
-    case 'resistor': {
-      const r = typeof part.state.resistanceOhm === 'number' ? part.state.resistanceOhm : (def?.resistanceOhm ?? 100)
-      branch.resistance = r
+
+    case 'switch':
+      branch.isOpen = state.closed ? false : true
+      branch.resistance = def.internalOhm ?? 0
       break
-    }
-    case 'rheostat': {
-      const v = typeof part.state.value === 'number' ? part.state.value : (def?.resistanceOhm ?? 50)
-      branch.resistance = v
+
+    case 'button':
+      branch.isOpen = state.pressed ? false : true
+      branch.resistance = def.internalOhm ?? 0
       break
-    }
-    case 'switch': {
-      branch.isOpen = !(part.state.closed === true)
-      branch.resistance = 0.02
-      break
-    }
-    case 'button': {
-      branch.isOpen = !(part.state.pressed === true)
-      branch.resistance = 0.02
-      break
-    }
-    case 'fuse': {
-      if (part.state.blown === true) {
+
+    case 'fuse':
+      if (state.blown) {
         branch.isOpen = true
       } else {
-        branch.resistance = def?.internalOhm ?? 0.05
+        branch.resistance = def.internalOhm ?? 0
       }
       break
+
+    case 'rheostat': {
+      const value = typeof state.value === 'number' ? state.value : (def.resistanceOhm ?? 0)
+      branch.resistance = Math.max(def.minOhm ?? 0, Math.min(def.maxOhm ?? 500, value))
+      break
     }
-    case 'capacitor': {
+
+    case 'voltmeter':
       branch.isOpen = true
-      branch.isMeterVoltage = true
       break
-    }
-    case 'voltmeter': {
-      branch.resistance = def?.internalOhm ?? 1000000
-      branch.isMeterVoltage = true
+
+    case 'ammeter':
+      branch.resistance = def.internalOhm ?? 0
       break
-    }
-    case 'ammeter': {
-      branch.resistance = def?.internalOhm ?? 0.01
+
+    case 'capacitor':
+      branch.isOpen = true
       break
-    }
+
+    case 'inductor':
+      branch.resistance = def.internalOhm ?? 0
+      break
+
+    case 'diode':
     case 'led':
-    case 'diode': {
-      branch.resistance = def?.resistanceOhm ?? 20
+      branch.forwardDropV = def.forwardDropV ?? 0
+      branch.resistance = def.resistanceOhm ?? 0
+      if (part.id in conducting) branch.diodeConducting = conducting[part.id]
+      if (!branch.diodeConducting) branch.isOpen = true
       break
-    }
-    default: {
-      branch.resistance = def?.resistanceOhm ?? def?.internalOhm ?? 0.02
+
+    case 'resistor':
+      branch.resistance = typeof state.resistanceOhm === 'number' ? state.resistanceOhm : (def.resistanceOhm ?? 0)
       break
-    }
+
+    default:
+      if (def.resistanceOhm !== undefined) branch.resistance = def.resistanceOhm
+      else if (def.internalOhm !== undefined) branch.resistance = def.internalOhm
+      else branch.resistance = 0.02
+      break
   }
 
   return branch
 }
 
-function solveMatrix(n: number, G: number[][], I: number[]): number[] {
-  const size = n
-  const A = G.map(row => [...row])
-  const b = [...I]
+function gaussianSolve(A: number[][], z: number[]): number[] {
+  const n = z.length
+  const M = A.map((row, i) => row.concat([z[i]]))
 
-  for (let col = 0; col < size; col++) {
-    let maxRow = col
-    for (let row = col + 1; row < size; row++) {
-      if (Math.abs(A[row][col]) > Math.abs(A[maxRow][col])) maxRow = row
+  for (let col = 0; col < n; col++) {
+    let pivotRow = col
+    let maxAbs = Math.abs(M[col][col])
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(M[r][col]) > maxAbs) {
+        maxAbs = Math.abs(M[r][col])
+        pivotRow = r
+      }
     }
-    ;[A[col], A[maxRow]] = [A[maxRow], A[col]]
-    ;[b[col], b[maxRow]] = [b[maxRow], b[col]]
+    if (maxAbs < 1e-12) continue
 
-    if (Math.abs(A[col][col]) < 1e-12) continue
+    if (pivotRow !== col) {
+      const tmp = M[col]
+      M[col] = M[pivotRow]
+      M[pivotRow] = tmp
+    }
 
-    for (let row = col + 1; row < size; row++) {
-      const factor = A[row][col] / A[col][col]
-      for (let k = col; k < size; k++) A[row][k] -= factor * A[col][k]
-      b[row] -= factor * b[col]
+    const pivotVal = M[col][col]
+    for (let c = col; c <= n; c++) M[col][c] /= pivotVal
+
+    for (let r2 = 0; r2 < n; r2++) {
+      if (r2 === col) continue
+      const factor = M[r2][col]
+      if (Math.abs(factor) < 1e-15) continue
+      for (let c2 = col; c2 <= n; c2++) {
+        M[r2][c2] -= factor * M[col][c2]
+      }
     }
   }
 
-  const x = new Array(size).fill(0)
-  for (let i = size - 1; i >= 0; i--) {
-    if (Math.abs(A[i][i]) < 1e-12) continue
-    x[i] = b[i]
-    for (let j = i + 1; j < size; j++) x[i] -= A[i][j] * x[j]
-    x[i] /= A[i][i]
-  }
+  const x: number[] = []
+  for (let i = 0; i < n; i++) x.push(M[i][n])
   return x
 }
 
+function solveMNA(branches: Branch[], nodeList: string[]): MnaResult | null {
+  if (nodeList.length === 0) return { nodeVoltage: {}, branchCurrent: {} }
+
+  const groundNode = nodeList[0]
+  const nodeIndex: Record<string, number> = {}
+  let idx = 0
+  nodeList.forEach(n => {
+    if (n === groundNode) return
+    nodeIndex[n] = idx++
+  })
+  const numNodes = idx
+
+  const activeBranches = branches.filter(b => !b.isOpen)
+  const emfBranches = activeBranches.filter(b => Math.abs(b.emf) > EPS || b.forwardDropV > EPS)
+  const resistiveBranches = activeBranches.filter(b => Math.abs(b.emf) <= EPS && b.forwardDropV <= EPS)
+
+  const size = numNodes + emfBranches.length
+  if (size === 0) return { nodeVoltage: {}, branchCurrent: {} }
+
+  const A: number[][] = []
+  for (let r = 0; r < size; r++) A.push(new Array(size).fill(0))
+  const z: number[] = new Array(size).fill(0)
+
+  const nIdx = (nodeId: string): number => (nodeId === groundNode ? -1 : nodeIndex[nodeId])
+
+  resistiveBranches.forEach(b => {
+    const g = 1 / Math.max(b.resistance, 1e-6)
+    const ia = nIdx(b.nodeA)
+    const ib = nIdx(b.nodeB)
+    if (ia >= 0) A[ia][ia] += g
+    if (ib >= 0) A[ib][ib] += g
+    if (ia >= 0 && ib >= 0) {
+      A[ia][ib] -= g
+      A[ib][ia] -= g
+    }
+  })
+
+  emfBranches.forEach((b, k) => {
+    const row = numNodes + k
+    const ia = nIdx(b.nodeA)
+    const ib = nIdx(b.nodeB)
+
+    if (ia >= 0) A[ia][row] += 1
+    if (ib >= 0) A[ib][row] -= 1
+
+    const rSeries = Math.max(b.resistance, 1e-6)
+    if (ia >= 0) A[row][ia] += 1
+    if (ib >= 0) A[row][ib] -= 1
+    A[row][row] -= rSeries
+
+    z[row] = b.emf - b.forwardDropV
+  })
+
+  const solution = gaussianSolve(A, z)
+
+  const nodeVoltage: Record<string, number> = {}
+  nodeVoltage[groundNode] = 0
+  nodeList.forEach(n => {
+    if (n === groundNode) return
+    nodeVoltage[n] = solution[nodeIndex[n]]
+  })
+
+  const branchCurrent: Record<string, number> = {}
+
+  resistiveBranches.forEach(b => {
+    const va = nodeVoltage[b.nodeA] || 0
+    const vb = nodeVoltage[b.nodeB] || 0
+    branchCurrent[b.partId] = (va - vb) / Math.max(b.resistance, 1e-6)
+  })
+
+  emfBranches.forEach((b, k) => {
+    branchCurrent[b.partId] = solution[numNodes + k]
+  })
+
+  return { nodeVoltage, branchCurrent }
+}
+
 export function solve(parts: Part[], wires: LogicalWire[]): CircuitResult {
-  const result: CircuitResult = {
-    branchCurrent: {},
-    partVoltage: {},
-    active: {},
-    blownFuses: {},
-    errors: []
+  const errors: string[] = []
+  const uf = buildNodes(parts, wires)
+
+  const polarizedParts = parts.filter(p => p.type === 'diode' || p.type === 'led')
+
+  const conducting: Record<string, boolean> = {}
+  polarizedParts.forEach(p => {
+    conducting[p.id] = true
+  })
+
+  let nodeVoltage: Record<string, number> = {}
+  let branchCurrent: Record<string, number> = {}
+  const maxIter = polarizedParts.length + 3
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    const branches: Branch[] = []
+    parts.forEach(p => {
+      const b = describeBranch(p, uf, conducting)
+      if (b) branches.push(b)
+    })
+
+    const allNodes: Record<string, boolean> = {}
+    branches.forEach(b => {
+      allNodes[b.nodeA] = true
+      allNodes[b.nodeB] = true
+    })
+
+    const result = solveMNA(branches, Object.keys(allNodes))
+    if (!result) {
+      errors.push("Не вдалося розв'язати схему (вироджена матриця).")
+      break
+    }
+    nodeVoltage = result.nodeVoltage
+    branchCurrent = result.branchCurrent
+
+    let changed = false
+    polarizedParts.forEach(p => {
+      const branch = branches.filter(b => b.partId === p.id)[0]
+      if (!branch) return
+
+      if (conducting[p.id]) {
+        const i = branchCurrent[p.id] || 0
+        if (i < -EPS) {
+          conducting[p.id] = false
+          changed = true
+        }
+      } else {
+        const va = nodeVoltage[branch.nodeA] || 0
+        const vb = nodeVoltage[branch.nodeB] || 0
+        const def = COMPONENT_MAP[p.type]
+        if (va - vb > (def.forwardDropV ?? 0) + EPS) {
+          conducting[p.id] = true
+          changed = true
+        }
+      }
+    })
+
+    if (!changed) break
   }
 
-  const allTermKeys: string[] = []
+  const finalBranches: Branch[] = []
   parts.forEach(p => {
-    const terms = COMPONENT_TERMINALS[p.type] || []
-    terms.forEach(t => allTermKeys.push(termKey(p.id, t.label)))
+    const b = describeBranch(p, uf, conducting)
+    if (b) finalBranches.push(b)
   })
 
-  const uf = new UnionFind(allTermKeys.length + 1)
-  const keyIndex = new Map<string, number>()
-  allTermKeys.forEach((k, i) => keyIndex.set(k, i))
+  const partVoltage: Record<string, number> = {}
+  const active: Record<string, boolean> = {}
+  const blownFuses: Record<string, boolean> = {}
 
-  allTermKeys.forEach(k => uf.find(keyIndex.get(k)!))
-
-  wires.forEach(w => {
-    const a = keyIndex.get(termKey(w.fromPart, w.fromTerm))
-    const b = keyIndex.get(termKey(w.toPart, w.toTerm))
-    if (a !== undefined && b !== undefined) uf.union(a, b)
+  finalBranches.forEach(b => {
+    const va = nodeVoltage[b.nodeA] || 0
+    const vb = nodeVoltage[b.nodeB] || 0
+    partVoltage[b.partId] = va - vb
   })
-
-  const nodeMap = new Map<number, number>()
-  let nodeCount = 0
-  allTermKeys.forEach((_, i) => {
-    const root = uf.find(i)
-    if (!nodeMap.has(root)) nodeMap.set(root, nodeCount++)
-  })
-
-  const getNode = (partId: string, termLabel: string): number => {
-    const idx = keyIndex.get(termKey(partId, termLabel))
-    if (idx === undefined) return -1
-    return nodeMap.get(uf.find(idx)) ?? -1
-  }
-
-  const branches: Branch[] = []
-  const emfBranches: Branch[] = []
 
   parts.forEach(p => {
-    const terms = COMPONENT_TERMINALS[p.type] || []
-    if (terms.length < 2) return
-    const nA = getNode(p.id, terms[0].label)
-    const nB = getNode(p.id, terms[1].label)
-    if (nA < 0 || nB < 0 || nA === nB) return
-
-    const br = buildBranch(p, nA, nB)
-    if (br.emf !== 0) emfBranches.push(br)
-    else branches.push(br)
-  })
-
-  const allBranches = [...branches, ...emfBranches]
-  const resistive = allBranches.filter(b => !b.isOpen && b.emf === 0)
-  const sources = allBranches.filter(b => !b.isOpen && b.emf !== 0)
-
-  if (nodeCount === 0 || (resistive.length === 0 && sources.length === 0)) return result
-
-  const groundNode = 0
-  const freeNodes = nodeCount - 1
-  const numVSrc = sources.length
-  const matSize = freeNodes + numVSrc
-
-  if (matSize === 0) return result
-
-  const G = Array.from({ length: matSize }, () => new Array(matSize).fill(0))
-  const I = new Array(matSize).fill(0)
-
-  const idx = (n: number) => n - 1
-
-  resistive.forEach(br => {
-    const g = 1 / Math.max(br.resistance, 1e-9)
-    if (br.nodeA !== groundNode) {
-      G[idx(br.nodeA)][idx(br.nodeA)] += g
-      if (br.nodeB !== groundNode) {
-        G[idx(br.nodeA)][idx(br.nodeB)] -= g
-      }
-    }
-    if (br.nodeB !== groundNode) {
-      G[idx(br.nodeB)][idx(br.nodeB)] += g
-      if (br.nodeA !== groundNode) {
-        G[idx(br.nodeB)][idx(br.nodeA)] -= g
-      }
-    }
-  })
-
-  sources.forEach((br, k) => {
-    const col = freeNodes + k
-    if (br.nodeA !== groundNode) {
-      G[idx(br.nodeA)][col] += 1
-      G[col][idx(br.nodeA)] += 1
-    }
-    if (br.nodeB !== groundNode) {
-      G[idx(br.nodeB)][col] -= 1
-      G[col][idx(br.nodeB)] -= 1
-    }
-    I[col] += br.emf
-    const g = 1 / Math.max(br.resistance, 1e-9)
-    if (br.nodeA !== groundNode) G[idx(br.nodeA)][idx(br.nodeA)] += g
-    if (br.nodeB !== groundNode) G[idx(br.nodeB)][idx(br.nodeB)] += g
-    if (br.nodeA !== groundNode && br.nodeB !== groundNode) {
-      G[idx(br.nodeA)][idx(br.nodeB)] -= g
-      G[idx(br.nodeB)][idx(br.nodeA)] -= g
-    }
-  })
-
-  const solution = solveMatrix(matSize, G, I)
-
-  const voltage = (n: number) => n === groundNode ? 0 : (solution[idx(n)] ?? 0)
-
-  allBranches.forEach((br, k) => {
-    if (br.isOpen) {
-      result.branchCurrent[br.partId] = 0
-      result.partVoltage[br.partId] = Math.abs(voltage(br.nodeA) - voltage(br.nodeB))
-      return
-    }
-    let current: number
-    if (br.emf !== 0) {
-      const srcIdx = sources.indexOf(br)
-      current = srcIdx >= 0 ? (solution[freeNodes + srcIdx] ?? 0) : 0
-    } else {
-      const va = voltage(br.nodeA)
-      const vb = voltage(br.nodeB)
-      current = (va - vb) / Math.max(br.resistance, 1e-9)
-    }
-    result.branchCurrent[br.partId] = current
-    result.partVoltage[br.partId] = Math.abs(voltage(br.nodeA) - voltage(br.nodeB))
+    if (p.type !== 'voltmeter') return
+    const terms = COMPONENT_TERMINALS.voltmeter
+    const nodeA = uf.find(termKey(p.id, terms[0].label))
+    const nodeB = uf.find(termKey(p.id, terms[1].label))
+    const va = nodeVoltage[nodeA] || 0
+    const vb = nodeVoltage[nodeB] || 0
+    partVoltage[p.id] = va - vb
+    branchCurrent[p.id] = 0
   })
 
   parts.forEach(p => {
     const def = COMPONENT_MAP[p.type]
     if (!def) return
+    const current = Math.abs(branchCurrent[p.id] || 0)
 
-    const current = Math.abs(result.branchCurrent[p.id] ?? 0)
-    const volt = result.partVoltage[p.id] ?? 0
-
-    if (p.type === 'fuse') {
-      const max = def.maxCurrentA ?? 1.5
-      if (current > max) result.blownFuses[p.id] = true
+    if (p.type === 'fuse' && current > (def.maxCurrentA ?? 1.5) + EPS) {
+      blownFuses[p.id] = true
     }
 
-    if (p.type === 'voltmeter') {
-      result.partVoltage[p.id] = volt
-      return
+    if (def.minCurrentA !== undefined && current >= def.minCurrentA) {
+      active[p.id] = true
     }
 
-    if (def.polarized) {
-      const terms = COMPONENT_TERMINALS[p.type] || []
-      const nA = getNode(p.id, terms[0].label)
-      const nB = getNode(p.id, terms[1].label)
-      const va = voltage(nA)
-      const vb = voltage(nB)
-      const forward = terms[0].label === 'a' ? va > vb : vb > va
-      if (!forward) return
-    }
-
-    const minI = def.minCurrentA
-    if (minI !== undefined) {
-      result.active[p.id] = current >= minI
-    } else if (p.type === 'ammeter') {
-      result.active[p.id] = current > 0.0001
-    } else if (p.type === 'inductor') {
-      result.active[p.id] = current > 0.001
-    } else if (p.type === 'capacitor') {
-      result.active[p.id] = volt > 0.1
+    if (p.type === 'inductor' && current >= 0.001) {
+      active[p.id] = true
     }
   })
 
-  return result
+  return { nodeVoltage, branchCurrent, partVoltage, active, blownFuses, errors }
 }

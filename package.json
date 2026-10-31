@@ -3,14 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler pages dev public --compatibility-date=2024-01-01",
-    "build": "tsc && node build.js",
-    "deploy": "wrangler pages deploy public",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc -p functions",
+    "dev": "npm run build && wrangler pages dev public",
+    "deploy": "npm run build && wrangler pages deploy public",
     "db:migrate": "wrangler d1 migrations apply interactive-scheme-db"
   },
   "devDependencies": {
-    "typescript": "^5.3.0",
-    "@cloudflare/workers-types": "^4.20240208.0",
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "typescript": "^5.9.3",
     "wrangler": "^3.28.0"
   }
 }
