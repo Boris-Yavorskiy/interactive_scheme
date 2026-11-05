@@ -11,7 +11,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     .first<User>()
 
   if (!user || !(await checkPassword(password, user.password_hash))) {
-    return json({ success: false, message: 'Неправильна пошта або пароль.' }, 400)
+    return json({ success: false, code: 'bad_credentials', message: 'Неправильна пошта або пароль.' }, 400)
   }
 
   const token = generateToken()

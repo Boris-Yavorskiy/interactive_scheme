@@ -6,10 +6,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const password = (body.password || '').trim()
 
   if (!email.includes('@')) {
-    return json({ success: false, message: 'Невірний формат email.' }, 400)
+    return json({ success: false, code: 'invalid_email', message: 'Невірний формат email.' }, 400)
   }
   if (password.length < 6) {
-    return json({ success: false, message: 'Пароль повинен містити щонайменше 6 символів.' }, 400)
+    return json({ success: false, code: 'short_password', message: 'Пароль повинен містити щонайменше 6 символів.' }, 400)
   }
 
   const existing = await env.DB
@@ -17,7 +17,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     .bind(email)
     .first()
   if (existing) {
-    return json({ success: false, message: 'Користувач із такою поштою вже зареєстрований.' }, 400)
+    return json({ success: false, code: 'email_taken', message: 'Користувач із такою поштою вже зареєстрований.' }, 400)
   }
 
   const hash = await hashPassword(password)

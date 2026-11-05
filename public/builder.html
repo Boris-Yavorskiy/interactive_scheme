@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Конструктор схем</title>
+  <link rel="stylesheet" href="/css/common.css">
+  <link rel="stylesheet" href="/css/builder.css">
+</head>
+<body>
+  <div id="sb-root">
+    <nav id="sb-navbar"></nav>
+
+    <div id="sb-topbar">
+      <div id="sb-topbar-title" data-i18n="builderTitle">Конструктор схем</div>
+      <div id="sb-topbar-actions">
+        <button id="sb-clear-btn" data-i18n="clearAll">Очистити полотно</button>
+        <button id="sb-save-btn" data-i18n="saveScheme">Зберегти схему</button>
+        <div id="sb-account-wrap">
+          <button id="sb-account-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M4 20c0-4 3.5-7 8-7s8 3 8 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <span id="sb-account-label"></span>
+          </button>
+          <div id="sb-account-menu"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sb-main">
+      <div id="sb-palette-wrap">
+        <div id="sb-palette"></div>
+      </div>
+
+      <div id="sb-canvas">
+        <div id="sb-canvas-inner">
+          <svg id="sb-wire-layer"></svg>
+          <div id="sb-parts-layer"></div>
+          <div id="sb-canvas-hint" data-i18n="canvasHint"></div>
+        </div>
+      </div>
+
+      <div id="sb-props-panel"></div>
+    </div>
+  </div>
+
+  <div class="sb-modal-overlay" id="sb-auth-modal"></div>
+  <div class="sb-modal-overlay" id="sb-schemes-modal"></div>
+  <div id="sb-toast"></div>
+
+  <script type="module" src="/js/builder/main.js"></script>
+</body>
+</html>

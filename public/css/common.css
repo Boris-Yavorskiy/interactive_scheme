@@ -1,0 +1,116 @@
+:root {
+  --sb-bg: #fdf8ee;
+  --sb-bg2: #f5eedb;
+  --sb-border: #e8dfc8;
+  --sb-accent: #d4a843;
+  --sb-accent2: #b8864e;
+  --sb-text: #3a3228;
+  --sb-muted: #7a6a58;
+  --sb-cream: #fffaf2;
+  --sb-danger: #c0392b;
+  --sb-success: #4a8c5e;
+  --sb-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sb-font-title: Georgia, "Times New Roman", serif;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background-color: var(--sb-bg);
+  color: var(--sb-text);
+  font-family: var(--sb-font);
+}
+
+button {
+  font-family: var(--sb-font);
+}
+
+#sb-navbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  background: var(--sb-cream);
+  border-bottom: 1px solid var(--sb-border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.sb-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--sb-muted);
+  text-decoration: none;
+  transition: all 0.18s;
+  border: 1.5px solid transparent;
+  white-space: nowrap;
+}
+
+.sb-nav-link:hover {
+  background: var(--sb-bg2);
+  color: var(--sb-text);
+  border-color: var(--sb-border);
+}
+
+.sb-nav-link.sb-nav-active {
+  background: var(--sb-accent);
+  color: #fff;
+  border-color: var(--sb-accent);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(212, 168, 67, 0.35);
+}
+
+.sb-nav-link.sb-nav-active:hover {
+  background: var(--sb-accent2);
+  border-color: var(--sb-accent2);
+}
+
+.sb-nav-link svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.sb-nav-link.sb-nav-active svg {
+  opacity: 1;
+}
+
+.sb-lang {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.sb-lang button {
+  border: 1.5px solid var(--sb-border);
+  background: var(--sb-bg2);
+  color: var(--sb-muted);
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.sb-lang button:hover {
+  border-color: var(--sb-accent2);
+  color: var(--sb-text);
+}
+
+.sb-lang button.sb-lang-on {
+  background: var(--sb-accent);
+  border-color: var(--sb-accent);
+  color: #fff;
+}

@@ -2,7 +2,7 @@ import { Env, json, getUser, Scheme } from '../_types'
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env, params }) => {
   const user = await getUser(request, env.DB)
-  if (!user) return json({ success: false, message: 'Потрібна авторизація.' }, 401)
+  if (!user) return json({ success: false, code: 'unauthorized', message: 'Потрібна авторизація.' }, 401)
 
   const id = Number(params.id)
   const scheme = await env.DB
@@ -10,7 +10,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env, params })
     .bind(id, user.id)
     .first<Scheme>()
 
-  if (!scheme) return json({ success: false, message: 'Схему не знайдено.' }, 404)
+  if (!scheme) return json({ success: false, code: 'not_found', message: 'Схему не знайдено.' }, 404)
 
   return json({
     success: true,
@@ -26,7 +26,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env, params })
 
 export const onRequestPut: PagesFunction<Env> = async ({ request, env, params }) => {
   const user = await getUser(request, env.DB)
-  if (!user) return json({ success: false, message: 'Потрібна авторизація.' }, 401)
+  if (!user) return json({ success: false, code: 'unauthorized', message: 'Потрібна авторизація.' }, 401)
 
   const id = Number(params.id)
   const body = await request.json<{ title: string; data: unknown }>()
@@ -39,14 +39,14 @@ export const onRequestPut: PagesFunction<Env> = async ({ request, env, params })
     .bind(title, data, now, id, user.id)
     .run()
 
-  if (result.meta.changes === 0) return json({ success: false, message: 'Схему не знайдено.' }, 404)
+  if (result.meta.changes === 0) return json({ success: false, code: 'not_found', message: 'Схему не знайдено.' }, 404)
 
   return json({ success: true })
 }
 
 export const onRequestDelete: PagesFunction<Env> = async ({ request, env, params }) => {
   const user = await getUser(request, env.DB)
-  if (!user) return json({ success: false, message: 'Потрібна авторизація.' }, 401)
+  if (!user) return json({ success: false, code: 'unauthorized', message: 'Потрібна авторизація.' }, 401)
 
   const id = Number(params.id)
   await env.DB

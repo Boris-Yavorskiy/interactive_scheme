@@ -2,7 +2,7 @@ import { Env, json, getUser, Scheme } from '../_types'
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const user = await getUser(request, env.DB)
-  if (!user) return json({ success: false, message: 'Потрібна авторизація.' }, 401)
+  if (!user) return json({ success: false, code: 'unauthorized', message: 'Потрібна авторизація.' }, 401)
 
   const rows = await env.DB
     .prepare('SELECT id, title, created_at, updated_at FROM schemes WHERE user_id = ? ORDER BY updated_at DESC')
@@ -21,7 +21,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const user = await getUser(request, env.DB)
-  if (!user) return json({ success: false, message: 'Потрібна авторизація.' }, 401)
+  if (!user) return json({ success: false, code: 'unauthorized', message: 'Потрібна авторизація.' }, 401)
 
   const body = await request.json<{ title: string; data: unknown }>()
   const title = (body.title || 'Без назви').trim().slice(0, 190)
