@@ -6,8 +6,6 @@ export interface User {
   id: number
   email: string
   password_hash: string
-  session_token: string | null
-  session_expires: number | null
 }
 
 export interface Scheme {
@@ -19,28 +17,13 @@ export interface Scheme {
   updated_at: number
 }
 
+const SESSION_SECONDS = 60 * 60 * 24 * 30
+
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json' }
   })
-}
-
-export function getSessionToken(request: Request): string | null {
-  const cookie = request.headers.get('Cookie') || ''
-  const match = cookie.match(/sb_session=([a-zA-Z0-9]+)/)
-  return match ? match[1] : null
-}
-
-export async function getUser(request: Request, db: D1Database): Promise<User | null> {
-  const token = getSessionToken(request)
-  if (!token) return null
-  const now = Math.floor(Date.now() / 1000)
-  const user = await db
-    .prepare('SELECT * FROM users WHERE session_token = ? AND session_expires > ? LIMIT 1')
-    .bind(token, now)
-    .first<User>()
-  return user ?? null
 }
 
 function toHex(bytes: Uint8Array): string {
@@ -85,15 +68,60 @@ export async function checkPassword(password: string, stored: string): Promise<b
   return toHex(hash) === parts[1]
 }
 
-export function generateToken(): string {
-  const arr = new Uint8Array(32)
-  crypto.getRandomValues(arr)
-  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('')
+async function hashToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
+  return toHex(new Uint8Array(digest))
 }
 
-export function sessionCookie(token: string, expires: number): string {
+function generateToken(): string {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return toHex(bytes)
+}
+
+export function getSessionToken(request: Request): string | null {
+  const cookie = request.headers.get('Cookie') || ''
+  const match = cookie.match(/sb_session=([a-f0-9]+)/)
+  return match ? match[1] : null
+}
+
+export async function createSession(db: D1Database, userId: number): Promise<{ token: string; expires: number }> {
+  const token = generateToken()
+  const now = Math.floor(Date.now() / 1000)
+  const expires = now + SESSION_SECONDS
+
+  await db.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now).run()
+  await db
+    .prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
+    .bind(await hashToken(token), userId, expires)
+    .run()
+
+  return { token, expires }
+}
+
+export async function deleteSession(db: D1Database, token: string) {
+  await db.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await hashToken(token)).run()
+}
+
+export async function getUser(request: Request, db: D1Database): Promise<User | null> {
+  const token = getSessionToken(request)
+  if (!token) return null
+
+  const now = Math.floor(Date.now() / 1000)
+  const user = await db
+    .prepare(
+      'SELECT users.id, users.email, users.password_hash FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token_hash = ? AND sessions.expires_at > ? LIMIT 1'
+    )
+    .bind(await hashToken(token), now)
+    .first<User>()
+
+  return user ?? null
+}
+
+export function sessionCookie(request: Request, token: string, expires: number): string {
   const date = new Date(expires * 1000).toUTCString()
-  return `sb_session=${token}; Path=/; HttpOnly; SameSite=Lax; Expires=${date}`
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : ''
+  return 'sb_session=' + token + '; Path=/; HttpOnly; SameSite=Lax; Expires=' + date + secure
 }
 
 export function clearCookie(): string {

@@ -1,13 +1,9 @@
-import { Env, json, getUser, clearCookie } from '../_types'
+import { Env, deleteSession, getSessionToken, clearCookie } from '../_types'
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
-  const user = await getUser(request, env.DB)
-  if (user) {
-    await env.DB
-      .prepare('UPDATE users SET session_token = NULL, session_expires = NULL WHERE id = ?')
-      .bind(user.id)
-      .run()
-  }
+  const token = getSessionToken(request)
+  if (token) await deleteSession(env.DB, token)
+
   return new Response(JSON.stringify({ success: true }), {
     status: 200,
     headers: {
