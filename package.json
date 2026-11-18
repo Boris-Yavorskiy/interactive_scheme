@@ -7,7 +7,8 @@
     "typecheck": "tsc --noEmit && tsc -p functions",
     "dev": "npm run build && wrangler pages dev public",
     "deploy": "npm run build && wrangler pages deploy public",
-    "db:migrate": "wrangler d1 migrations apply interactive-scheme-db"
+    "db:local": "wrangler d1 migrations apply interactive-scheme-db --local",
+    "db:remote": "wrangler d1 migrations apply interactive-scheme-db --remote"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",
