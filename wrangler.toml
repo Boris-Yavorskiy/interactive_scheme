@@ -5,4 +5,4 @@ pages_build_output_dir = "public"
 [[d1_databases]]
 binding = "DB"
 database_name = "interactive-scheme-db"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "599a9887-314a-420b-ae1b-902eda5d0c9c"
